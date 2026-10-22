@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Friend Chat</title>
+<style>
+  :root {
+    --bg: #f3f6f4;
+    --panel: #ffffff;
+    --ink: #1c2b27;
+    --muted: #6b7c76;
+    --me: #1f6f5c;
+    --me-ink: #ffffff;
+    --them: #e6ece9;
+    --line: #d7dfdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121a18; --panel: #19231f; --ink: #e8efec; --muted: #8a9b95;
+      --me: #2e9a80; --me-ink: #08130f; --them: #243029; --line: #2b3832;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    width: min(100%, 520px); height: min(100%, 760px);
+    background: var(--panel); display: flex; flex-direction: column;
+    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  }
+  @media (max-width: 560px) { .card { border-radius: 0; border: 0; } }
+
+  /* Join screen */
+  #join { margin: auto; padding: 32px; width: 100%; }
+  #join h1 { font-size: 1.6rem; margin: 0 0 6px; }
+  #join p { color: var(--muted); margin: 0 0 24px; line-height: 1.5; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 14px 0 6px; }
+  input {
+    width: 100%; padding: 12px 14px; font: inherit; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  }
+  input:focus, button:focus-visible { outline: 2px solid var(--me); outline-offset: 1px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; border: 0; border-radius: 10px;
+    background: var(--me); color: var(--me-ink); padding: 12px 18px;
+  }
+  #join button { width: 100%; margin-top: 22px; }
+
+  /* Chat screen */
+  #chat { display: none; flex-direction: column; height: 100%; }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  header strong { font-size: 1.05rem; }
+  header span { color: var(--muted); font-size: .85rem; }
+  #messages {
+    flex: 1; overflow-y: auto; padding: 16px; display: flex;
+    flex-direction: column; gap: 8px;
+  }
+  .msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; background: var(--them);
+         line-height: 1.4; overflow-wrap: anywhere; }
+  .msg.me { align-self: flex-end; background: var(--me); color: var(--me-ink); }
+  .msg .who { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 2px; }
+  .msg .time { display: block; font-size: .7rem; opacity: .65; margin-top: 3px; text-align: right; }
+  .sys { align-self: center; color: var(--muted); font-size: .8rem; }
+  #typing { height: 20px; padding: 0 18px; color: var(--muted); font-size: .8rem; }
+  form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+  form input { flex: 1; }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div id="join">
+    <h1>Chat with a friend</h1>
+    <p>Pick a name, then both of you enter the same room name to start talking.</p>
+    <form id="joinForm" style="display:block;padding:0;border:0">
+      <label for="name">Your name</label>
+      <input id="name" maxlength="24" autocomplete="nickname" required>
+      <label for="room">Room name</label>
+      <input id="room" maxlength="40" placeholder="e.g. pizza-night-42" required>
+      <button type="submit">Join room</button>
+    </form>
+  </div>
+
+  <div id="chat">
+    <header><strong id="roomTitle"></strong><span id="count"></span></header>
+    <div id="messages" aria-live="polite"></div>
+    <div id="typing"></div>
+    <form id="sendForm">
+      <input id="text" placeholder="Type a message" autocomplete="off" maxlength="2000">
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  const $ = (id) => document.getElementById(id);
+  let myName = "";
+
+  $("joinForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    myName = $("name").value.trim();
+    const room = $("room").value.trim();
+    socket.emit("join", { name: myName, room });
+    $("roomTitle").textContent = room;
+    $("join").style.display = "none";
+    $("chat").style.display = "flex";
+    $("text").focus();
+  });
+
+  $("sendForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("text").value.trim();
+    if (!text) return;
+    socket.emit("message", text);
+    socket.emit("typing", false);
+    $("text").value = "";
+  });
+
+  let typingTimer;
+  $("text").addEventListener("input", () => {
+    socket.emit("typing", true);
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => socket.emit("typing", false), 1500);
+  });
+
+  socket.on("history", (list) => list.forEach(addMessage));
+  socket.on("message", addMessage);
+  socket.on("system", (t) => {
+    const el = document.createElement("div");
+    el.className = "sys";
+    el.textContent = t;
+    $("messages").appendChild(el);
+    scrollDown();
+  });
+  socket.on("count", (n) => ($("count").textContent = n + " online"));
+  socket.on("typing", ({ name, isTyping }) => {
+    $("typing").textContent = isTyping ? name + " is typing…" : "";
+  });
+
+  function addMessage({ name, text, time }) {
+    const mine = name === myName;
+    const el = document.createElement("div");
+    el.className = "msg" + (mine ? " me" : "");
+    if (!mine) {
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = name;
+      el.appendChild(who);
+    }
+    const body = document.createElement("span");
+    body.textContent = text; // textContent keeps messages safe from HTML injection
+    el.appendChild(body);
+    const t = document.createElement("span");
+    t.className = "time";
+    t.textContent = new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    el.appendChild(t);
+    $("messages").appendChild(el);
+    scrollDown();
+  }
+
+  function scrollDown() {
+    const m = $("messages");
+    m.scrollTop = m.scrollHeight;
+  }
+</script>
+</body>
+</html>

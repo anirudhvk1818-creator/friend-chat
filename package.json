@@ -1,0 +1,13 @@
+{
+  "name": "friend-chat",
+  "version": "1.0.0",
+  "description": "Simple real-time chat room for two (or more) friends",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
